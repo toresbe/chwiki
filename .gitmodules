@@ -1,0 +1,9 @@
+[submodule "extensions/DynamicPageList4"]
+	path = extensions/DynamicPageList4
+	url = https://github.com/Universal-Omega/DynamicPageList4.git
+[submodule "extensions/Nuke"]
+	path = extensions/Nuke
+	url = https://gerrit.wikimedia.org/r/mediawiki/extensions/Nuke
+[submodule "extensions/ParserFunctions"]
+	path = extensions/ParserFunctions
+	url = https://gerrit.wikimedia.org/r/mediawiki/extensions/ParserFunctions
