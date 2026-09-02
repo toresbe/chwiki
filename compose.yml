@@ -1,0 +1,50 @@
+
+#   podman-compose up -d
+#   podman-compose down          # keep the mysql-data volume
+#   podman-compose down -v       # also wipe the DB
+#
+# The extensions and images volumes below point at the same file01 NFS
+# exports the k8s deployment uses (see roles/chwiki_extensions and
+# roles/chwiki_images). Adjust addr= if running this from somewhere that
+# can't reach file01 directly.
+#
+# DB credentials come from a .env file in this directory (podman-compose
+# loads it automatically), kept out of git -- see .env.example.
+
+services:
+  mysql:
+    image: docker.io/library/mysql:8.0
+    command:
+      - --max-allowed-packet=256M
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CHWIKI_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: mediawiki
+      MYSQL_USER: chwikiuser
+      MYSQL_PASSWORD: ${CHWIKI_DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+
+  mediawiki:
+    image: docker.io/library/mediawiki:1.43
+    depends_on:
+      - mysql
+    ports:
+      - "1125:80"
+    environment:
+      CHWIKI_DB_PASSWORD: ${CHWIKI_DB_PASSWORD}
+    volumes:
+      - ./LocalSettings.php:/var/www/html/LocalSettings.php:ro,Z
+      - ./extensions:/var/www/html/extensions:ro,Z
+      - images:/var/www/html/images
+      - ./icon.png:/var/www/html/icon.png:ro,Z
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  images:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=file01
+      device: ":/util/chwiki-images"

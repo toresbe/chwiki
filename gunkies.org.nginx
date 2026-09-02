@@ -1,0 +1,83 @@
+# nginx config for reference
+# --- HTTP: ACME + redirect ---
+server {
+    listen 80;
+    listen [::]:80;
+    server_name gunkies.org www.gunkies.org;
+
+    # Webroot for cert renewals (adjust if different)
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# --- HTTPS site ---
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name gunkies.org www.gunkies.org;
+
+    # Host logs & static files for non-proxied paths
+    access_log /srv/web/gunkies.org/logs/access.log;
+    error_log  /srv/web/gunkies.org/logs/error.log;
+
+    root  /srv/web/gunkies.org/htdocs;
+    index index.html index.htm;
+
+    # TLS using your existing LE certs
+    ssl_certificate     /etc/letsencrypt/live/gunkies.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/gunkies.org/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+
+
+
+# Normalize /wiki (no trailing slash)
+location = /wiki {
+    return 301 /wiki/;
+}
+
+# Pretty URLs: /wiki/Title -> /index.php?title=Title
+location ^~ /wiki/ {
+    # rewrite before proxying so MW sees index.php?title=...
+    rewrite ^/wiki/?(.*)$ /index.php?title=$1&$args break;
+
+    proxy_pass http://127.0.0.1:1125;   # <-- your container on the host
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout    60s;
+    proxy_read_timeout    60s;
+    proxy_buffering off;
+}
+
+# App endpoints/assets because $wgScriptPath = "/w"
+# NOTE the trailing slash in proxy_pass — it strips the /w/ prefix.
+location ^~ /w/ {
+    proxy_pass http://127.0.0.1:1125/;  # /w/foo -> /foo inside the container
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_send_timeout    60s;
+    proxy_read_timeout    60s;
+    proxy_buffering off;
+}
+    # Everything NOT /wiki or /w is served locally
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Optional hardening
+    location ~ /\. { deny all; }
+    client_max_body_size 64m;  # let users upload reasonable files through the proxy
+}
