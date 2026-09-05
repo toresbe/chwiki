@@ -20,7 +20,16 @@ wfLoadExtension('ParserFunctions');
 wfLoadExtension('Nuke');
 $wgUseFileCache = false;
 $wgEnableSidebarCache = true;
+# Localisation cache. Mounted on the l10n-cache volume by compose.yml so it
+# survives container restarts.
 $wgCacheDirectory= "$IP/l10n-cache";
+
+# Never rebuild the localisation cache on demand: a cold cache would otherwise
+# have every concurrent request racing to regenerate it. compose.yml runs
+# rebuildLocalisationCache.php at container start instead, so the cache is
+# always warm before Apache accepts a request. After changing MediaWiki
+# versions or extensions, restart the container (or run the script by hand).
+$wgLocalisationCacheConf['manualRecache'] = true;
 
 if ( $wgCommandLineMode ) {
   if ( isset( $_SERVER ) && array_key_exists( 'REQUEST_METHOD', $_SERVER ) ) {
@@ -53,7 +62,6 @@ $wgLogo = "$wgScriptPath/icon.png";
 #$wgEnableEmail      = true;
 #$wgEnableUserEmail  = true;
 
-$wgShowExceptionDetails = true;
 $wgPasswordSender = "toresbe@gmail.com";
 
 ## For a detailed description of the following switches see
@@ -80,9 +88,33 @@ $wgDBport           = "3306";
 $wgDBprefix         = "wiki_";
 
 ## Shared memory settings
-$wgMainCacheType = CACHE_NONE;
-$wgParserCacheType = CACHE_DB; # https://www.mediawiki.org/wiki/User:Ilmari_Karonen/Performance_tuning
-$wgMessageCacheType = CACHE_DB;
+# https://www.mediawiki.org/wiki/User:Ilmari_Karonen/Performance_tuning
+#
+# The main object cache (and, following it, sessions) lives in the memcached
+# container defined in compose.yml. CACHE_MEMCACHED uses MediaWiki's pure-PHP
+# client, so no PECL extension is needed in the mediawiki image.
+$wgMainCacheType = CACHE_MEMCACHED;
+$wgMemCachedServers = [ 'memcached:11211' ];
+
+# Messages are cheap to regenerate, so they can live in volatile memory.
+$wgMessageCacheType = CACHE_MEMCACHED;
+
+# The parser cache stays in the database: it is large and expensive to rebuild,
+# and memcached would evict it (and lose it entirely on a restart).
+$wgParserCacheType = CACHE_DB;
+
+# The default expiry is one day, which means re-parsing every article daily
+# even though almost nothing here changes. Edits invalidate the cache for the
+# affected page anyway, so a long expiry costs nothing but disk.
+$wgParserCacheExpireTime = 30 * 24 * 3600;
+
+# Cache rendered pages and resources in the browser and in the nginx proxy.
+$wgUseCdn = false; # no purge-capable CDN in front of the wiki
+$wgCachePages = true;
+$wgResourceLoaderMaxage = [
+	'versioned' => 30 * 24 * 3600, # ResourceLoader URLs carry a version hash
+	'unversioned' => 5 * 60,
+];
 
 ## To enable image uploads, make sure the 'images' directory
 ## is writable, then set this to true:
@@ -117,11 +149,9 @@ $wgRightsText = "GNU Free Documentation License 1.2";
 
 $wgDiff3 = "/usr/bin/diff3";
 
-# When you make changes to this configuration file, this will make
-# sure that cached pages are cleared.
-$configdate = gmdate( 'YmdHis', @filemtime( __FILE__ ) );
-$wgCacheEpoch = max( $wgCacheEpoch, $configdate );
-
+# Changing this file clears cached pages: MediaWiki does the $wgCacheEpoch
+# bump itself when $wgInvalidateCacheOnLocalSettingsChange is on, which it is
+# by default. See includes/SetupDynamicConfig.php.
 
 $wgGroupPermissions['*']['edit'] = false;
 $wgGroupPermissions['*']['createaccount'] = false;
@@ -131,7 +161,10 @@ $wgGroupPermissions['sysop']['createaccount'] = true;
 
 $wgMaxShellMemory = 307200;
 
-$wgShowExceptionDetails = true;
-$wgShowSQLErrors = 1;
+# Do not leak stack traces or SQL to visitors. Errors go to the container log
+# instead; read them with `podman-compose logs mediawiki`. Set both to true
+# temporarily when debugging, and turn them back off afterwards.
+$wgShowExceptionDetails = false;
+$wgShowSQLErrors = false;
 
 ?>

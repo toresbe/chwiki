@@ -25,23 +25,54 @@ services:
       - mysql-data:/var/lib/mysql
     restart: unless-stopped
 
+  # Object cache for MediaWiki ($wgMainCacheType in LocalSettings.php). Not
+  # published on a host port: only the mediawiki container talks to it, and
+  # memcached has no authentication of its own.
+  memcached:
+    image: docker.io/library/memcached:1.6-alpine
+    command:
+      - -m
+      - "512"          # cache size in MB
+      - -I
+      - 4m             # max object size; MediaWiki messages exceed the 1M default
+    restart: unless-stopped
+
   mediawiki:
     image: docker.io/library/mediawiki:1.43
     depends_on:
       - mysql
+      - memcached
     ports:
       - "1125:80"
     environment:
       CHWIKI_DB_PASSWORD: ${CHWIKI_DB_PASSWORD}
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        # The l10n cache directory is a root-owned empty volume on first start,
+        # so hand it to www-data before Apache drops privileges.
+        install -d -o www-data -g www-data /var/www/html/l10n-cache
+        # LocalSettings.php sets manualRecache, so the cache has to exist
+        # before the first request. Only out-of-date languages are rebuilt,
+        # which makes this cheap on every start after the first.
+        runuser -u www-data -- php maintenance/run.php rebuildLocalisationCache --quiet
+        exec apache2-foreground
     volumes:
       - ./LocalSettings.php:/var/www/html/LocalSettings.php:ro,Z
       - ./extensions:/var/www/html/extensions:ro,Z
       - images:/var/www/html/images
+      - l10n-cache:/var/www/html/l10n-cache
       - ./icon.png:/var/www/html/icon.png:ro,Z
+      # Sorts after the image's own opcache-recommended.ini, which is too
+      # small for MediaWiki. See the comments in php-opcache.ini.
+      - ./php-opcache.ini:/usr/local/etc/php/conf.d/zz-opcache-mediawiki.ini:ro,Z
     restart: unless-stopped
 
 volumes:
   mysql-data:
+  l10n-cache:
   images:
     driver: local
     driver_opts:
